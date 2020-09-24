@@ -1,5 +1,7 @@
 #include <Arduino.h>
-#include <ESP8266WebServer.h>
+#include <DNSServer.h>            //Local DNS Server used for redirecting all requests to the configuration portal
+#include <ESP8266WebServer.h>     //Local WebServer used to serve the configuration portal
+#include <WiFiManager.h>    
 #include <ESP8266WiFi.h>
 #include <EEPROM.h>
 #include <WiFiUdp.h>
@@ -14,6 +16,8 @@ USING_NAMESPACE_APPLEMIDI
 #include "AudioGeneratorWAV.h"
 #include "AudioOutputI2SNoDAC.h"
 #include "AudioOutputMixer.h"
+
+std::unique_ptr<ESP8266WebServer> server;
 
 APPLEMIDI_CREATE_INSTANCE(WiFiUDP, MIDI, "ESP8266", DEFAULT_CONTROL_PORT);
 
@@ -31,12 +35,6 @@ boolean Running[2];
 long start[2];
 long Play = 0;
 
-//Configuramos el wifi en modo AP, puerto 80, dirección 192.168.1.2, contrasenya petisus, nombre BATERIA
-ESP8266WebServer server(80);
-IPAddress ip(192, 168, 1, 2);
-IPAddress gateway(192, 168, 1, 1);
-IPAddress subnet(255, 255, 255, 0);
-String contrasenya = "petisuis";
 
 int eepromInicializada = 0; //eeprom pos 1. Está a 1 si la placa está inicializada
 
@@ -50,7 +48,8 @@ void setup()
   delay(1000);
   leerEeprom(); //Lee las variables configurables de la Eeprom y si tienen valores inválidos, las inicializa
 
-
+WiFiManager wifiManager;
+wifiManager.autoConnect("bateria");
 
   audioLogger = &Serial;
 
@@ -60,18 +59,20 @@ void setup()
   stub[0] = mixer->NewInput();
   stub[1] = mixer->NewInput();
   delay(100);
-  Beginplay(1, der2,der2_len, 1.0);
-  Beginplay(0, izq2,izq2_len, 1.0);
-  Play = 1;
+
 
 
 
 
   initWifi();
+    Beginplay(1, der2,der2_len, 1.0);
+  Beginplay(0, izq2,izq2_len, 1.0);
+  Play = 1;
 }
 
 void loop()
 {
+    MIDI.read();
   if (wav[0]->isRunning()) {
     if (!wav[0]->loop()) {
       wav[0]->stop(); stub[0]->stop();
@@ -110,28 +111,23 @@ void loop()
 
 
 
-//inicializa el wifi como AP
+//inicializa el wifi 
 void initWifi()
 {
-  Serial.println("Iniciando wifi...");
+  Serial.println("connected...yeey :)");
+  
+  server.reset(new ESP8266WebServer(WiFi.localIP(), 80));
 
-  WiFi.mode(WIFI_AP);
-  while (!WiFi.softAP("bateria", contrasenya))
-  {
-    Serial.println(".");
-    delay(100);
+  server->on("/", handleRoot);
+
+    server->begin();                //Start server
+
+
+while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(F("."));
   }
-  WiFi.softAPConfig(ip, gateway, subnet);
-
-  Serial.print("Iniciado AP ");
-  Serial.println("bateria");
-  Serial.print("IP address:\t");
-  Serial.println(WiFi.softAPIP());
-  server.on("/", handleRoot);      //Which routine to handle at root location
-
-  server.begin();                  //Start server
-
-    Serial.println();
+  Serial.println();
   Serial.print(F("IP address is "));
   Serial.println(WiFi.localIP());
 
@@ -270,7 +266,8 @@ void handleRoot()
   </body>\
   </html>";
 */
-  server.send(200, "text/html", strRoot);
+
+    server->send(200, "text/html", strRoot);
 
 }
 
