@@ -4,6 +4,7 @@
 #include <EEPROM.h>
 #include <WiFiUdp.h>
 #include <analogmuxdemux.h>
+#include <ESP8266WebServer.h>
 
 #include "der1cl.h"
 #include "der1op.h"
@@ -14,6 +15,9 @@
 #include "izq3.h"
 #include "pie_der.h"
 #include "pie_izq_cer.h"
+
+unsigned long t0 = millis();
+int j = 0;
 
 #include "AppleMIDI.h"
 USING_NAMESPACE_APPLEMIDI
@@ -44,8 +48,10 @@ int valoresMaximos[8];
 
 int configMax[8];
 int configMin[8];
+double configVol[8];
 
-
+boolean pedalHit = false;
+boolean pararSplash = false;
 
 
 int eepromInicializada = 0; //eeprom pos 1. Está a 1 si la placa está inicializada
@@ -84,10 +90,20 @@ void loop()
 {
   MIDI.read();
   leerPiezos();
-
   for (int i = 0; i < 8; i++)
   {
-    if (wav[i]->isRunning()) {
+    if (i == 1 && pararSplash && Running[i])
+    {
+
+
+      pararSplash = false;
+      wav[i]->stop(); stub[i]->stop();
+      Running[i] = false; Serial.printf("stopping %d \n", i);
+         
+
+    } else if (Running[i] && wav[i]->isRunning()) {
+        
+
       if (!wav[i]->loop()) {
         wav[i]->stop(); stub[i]->stop();
         Running[i] = false; Serial.printf("stopping %d \n", i);
@@ -96,7 +112,7 @@ void loop()
   }
 
 
-
+server->handleClient();
 
 }
 
@@ -148,7 +164,7 @@ void handleRoot()
       EEPROM.put(10 + (i * 10), valor);
       EEPROM.commit();
       Serial.println("Nuevo parametro piezo_" + (String) i + "_max: " + String(valor));
-      configMax[i]=valor;
+      configMax[i] = valor;
 
     }
 
@@ -158,7 +174,15 @@ void handleRoot()
       EEPROM.put(90 + (i * 10), valor);
       EEPROM.commit();
       Serial.println("Nuevo parametro piezo_" + (String) i + "_min: " + String(valor));
-      configMin[i]=valor;
+      configMin[i] = valor;
+    }
+    if (server->hasArg("vol_" + (String) i ))
+    {
+      float valor = server->arg("vol_" + (String) i ).toFloat();
+      EEPROM.put(170 + (i * 10), valor);
+      EEPROM.commit();
+      Serial.println("Nuevo parametro vol_" + (String) i + String(valor));
+      configVol[i] = valor;
     }
 
   }
@@ -176,8 +200,9 @@ void handleRoot()
   {
     strRoot = strRoot + "<br><form>\
     <label for=\"fname\">PIEZO " + (String) i + " (Máx actual: " + (String)valoresMaximos[i] + ") </label>\
-    Umbral Min/Máx: <input type=\"number\" style=\"width: 4em;\" min=\"1\" max=\"1024\" id=\"piezo_" + (String) i + "_min\" name=\"piezo_" + (String) i + "_min\" value=\"" +  (String)configMin[i] + "\">\
-    <input type=\"number\" style=\"width: 4em;\" min=\"1\" max=\"1024\" id=\"piezo_" + (String) i + "_max\" name=\"piezo_" + (String) i + "_max\" value=\"" +  (String)configMax[i] + "\">\
+    Umbral Min: <input type=\"number\" style=\"width: 4em;\" min=\"1\" max=\"1024\" id=\"piezo_" + (String) i + "_min\" name=\"piezo_" + (String) i + "_min\" value=\"" +  (String)configMin[i] + "\">\
+    Umbral Max: <input type=\"number\" style=\"width: 4em;\" min=\"1\" max=\"1024\" id=\"piezo_" + (String) i + "_max\" name=\"piezo_" + (String) i + "_max\" value=\"" +  (String)configMax[i] + "\">\
+    Volumen: <input type=\"number\" step=\"0.01\" style=\"width: 4em;\" min=\"0\" max=\"10\" id=\"vol_" + (String) i + "\" name=\"vol_" + (String) i + "\" value=\"" +  (String)configVol[i] + "\">\
     <input type=\"submit\" value=\"Envia\"><br>\
   </form><br>";
   }
@@ -232,6 +257,25 @@ void leerEeprom()
     }
 
 
+
+  }
+
+  for (int i = 16; i < 24; i++)
+  {
+    float valor = 1.0;
+    EEPROM.get(10 + (i * 10), valor);
+    if (valor < 0.0 || valor > 10.0)
+    {
+      valor = 1.0;
+      EEPROM.put(10 + (i * 10), valor);
+      EEPROM.commit();
+    }
+
+    configVol[i - 16] = valor;
+
+
+
+
   }
 
 
@@ -267,7 +311,7 @@ void Beginplay(int Channel, const void *wavfilename, int sizewav, float Volume, 
   Serial.println(Volume);
   start[Channel] = millis();
 
-  byte velocity = Volume*127;
+  byte velocity = Volume * 127;
   byte channel = 1;
 
   MIDI.sendNoteOn(note, velocity, channel);
@@ -277,29 +321,65 @@ void Beginplay(int Channel, const void *wavfilename, int sizewav, float Volume, 
 void leerPiezos() {
   for (int i = 0; i < 8; i++)
   {
-    int val = amux.AnalogRead(i);
+    int val=0;
+    if (millis() - t0 > 1000)
+    {
+      t0 = millis();
+      if (j == i)
+      {
+          Serial.printf("asignando valor 1000");
+
+        val = 512;
+
+      }
+      j++;
+      if (j > 7)
+        j = 0;
+    }
+    
+
+    //int val = amux.AnalogRead(i);
     if (valoresMaximos[i] < val)
       valoresMaximos[i] = val;
+
+ 
+
+    if (i == 0 && pedalHit && configMin[i] >= val)
+    {
+      pedalHit = false;
+
+
+      Beginplay(7, pie_izq_cer, pie_izq_cer_len, configVol[i], 70);
+      pararSplash = true;
+
+    }
     if (configMin[i] < val)
     {
+
       if (i == 0)
-        Beginplay(0, der1cl, der1cl_len, val/configMax[i],1);//  TODO CLOSE / OPEN
-      else if (i == 1)
-        Beginplay(1, der2, der2_len, val/configMax[i],10);
+        pedalHit = true;
+      else if (i == 1 && pedalHit)
+        Beginplay(0, der1op, der1op_len, ((float)val / (float)configMax[i])*configVol[i], 1);
+      else if (i == 1 && !pedalHit)
+        Beginplay(0, der1cl, der1cl_len, ((float)val / (float)configMax[i])*configVol[i], 1);
+
       else if (i == 2)
-        Beginplay(2, der3, der3_len, val/configMax[i],20);
+        Beginplay(1, der2, der2_len, ((float)val / (float)configMax[i])*configVol[i], 20);
+
       else if (i == 3)
-        Beginplay(3, izq1, izq1_len, val/configMax[i],30);
+        Beginplay(2, der3, der3_len, ((float)val / (float)configMax[i])*configVol[i], 20);
       else if (i == 4)
-        Beginplay(4, izq2, izq2_len, val/configMax[i],40);
+        Beginplay(3, izq1, izq1_len, ((float)val / (float)configMax[i])*configVol[i], 30);
       else if (i == 5)
-        Beginplay(5, izq3, izq3_len, val/configMax[i],50);
+        Beginplay(4, izq2, izq2_len, ((float)val / (float)configMax[i])*configVol[i], 40);
       else if (i == 6)
-        Beginplay(6, pie_der, pie_der_len, val/configMax[i],60);
+        Beginplay(5, izq3, izq3_len, ((float)val / (float)configMax[i])*configVol[i], 50);
       else if (i == 7)
-        Beginplay(7, pie_izq_cer, pie_izq_cer_len, val/configMax[i],70);
-      if (i == 7)//ARREGLAR
-        Beginplay(7, der1op, der1op_len, val/configMax[i],70);//ARREGLAR
+        Beginplay(6, pie_der, pie_der_len, ((float)val / (float)configMax[i])*configVol[i], 60);
+
+
+
+
 
 
 
