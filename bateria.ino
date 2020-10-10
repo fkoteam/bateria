@@ -3,7 +3,6 @@
 #include <ESP8266WiFi.h>
 #include <EEPROM.h>
 #include <WiFiUdp.h>
-#include <analogmuxdemux.h>
 #include <ESP8266WebServer.h>
 
 #include "der1cl.h"
@@ -17,7 +16,14 @@
 #include "pie_izq_cer.h"
 
 unsigned long t0 = millis();
+ long freqTamborMillis = 200.0; //300bpm
 int j = 0;
+
+#define MUX_A D5
+#define MUX_B D3
+#define MUX_C D2
+
+#define ANALOG_INPUT A0
 
 #include "AppleMIDI.h"
 USING_NAMESPACE_APPLEMIDI
@@ -43,7 +49,6 @@ AudioFileSourcePROGMEM *file[8];
 boolean Running[8];
 long start[8];
 
-AnalogMux amux(4, 3, 2, 0); //specifies the values for S0=4, S1=3, S2=2 on the 4051
 int valoresMaximos[8];
 
 int configMax[8];
@@ -61,6 +66,10 @@ int eepromInicializada = 0; //eeprom pos 1. Está a 1 si la placa está iniciali
 void setup()
 {
 
+  pinMode(MUX_A, OUTPUT);
+  pinMode(MUX_B, OUTPUT);
+  pinMode(MUX_C, OUTPUT);
+
   Serial.begin(115200);
   EEPROM.begin(512);
   delay(1000);
@@ -75,7 +84,10 @@ void setup()
 
   mixer = new AudioOutputMixer(32, out);
   for (int i = 0; i < 8; i++)
+  {
     stub[i] = mixer->NewInput();
+    start[i]=0;
+  }
   delay(100);
 
 
@@ -88,7 +100,10 @@ void setup()
 
 void loop()
 {
+
+
   MIDI.read();
+
   leerPiezos();
   for (int i = 0; i < 8; i++)
   {
@@ -99,10 +114,10 @@ void loop()
       pararSplash = false;
       wav[i]->stop(); stub[i]->stop();
       Running[i] = false; Serial.printf("stopping %d \n", i);
-         
+
 
     } else if (Running[i] && wav[i]->isRunning()) {
-        
+
 
       if (!wav[i]->loop()) {
         wav[i]->stop(); stub[i]->stop();
@@ -112,7 +127,7 @@ void loop()
   }
 
 
-server->handleClient();
+  server->handleClient();
 
 }
 
@@ -292,57 +307,76 @@ void leerEeprom()
 
 
 void Beginplay(int Channel, const void *wavfilename, int sizewav, float Volume, byte note) {
-  // String Filename;
-  // Filename=wavfilename;
-  Serial.printf("CH:");
-  Serial.print(Channel);
-  stub[Channel]->SetGain(Volume);
+ /* if (millis() - start[Channel] > freqTamborMillis)
+  {*/
+//    Volume=1.0;
 
-  wav[Channel] = new AudioGeneratorWAV();
+    Serial.printf("CH:");
+    Serial.print(Channel);
+    stub[Channel]->SetGain(Volume);
 
-  delete file[Channel]; // housekeeping ?
+    wav[Channel] = new AudioGeneratorWAV();
 
-  file[Channel] = new AudioFileSourcePROGMEM( wavfilename, sizewav );
+    delete file[Channel]; // housekeeping ?
 
-  wav[Channel]->begin(file[Channel], stub[Channel]);
+    file[Channel] = new AudioFileSourcePROGMEM( wavfilename, sizewav );
 
-  Running[Channel] = true;
-  Serial.printf("> at volume :");
-  Serial.println(Volume);
-  start[Channel] = millis();
+    wav[Channel]->begin(file[Channel], stub[Channel]);
 
-  byte velocity = Volume * 127;
-  byte channel = 1;
+    Running[Channel] = true;
+    Serial.printf("> at volume :");
+    Serial.println(Volume);
+    start[Channel] = millis();
+    t0=start[Channel];
 
-  MIDI.sendNoteOn(note, velocity, channel);
-  MIDI.sendNoteOff(note, velocity, channel);
+    byte velocity = Volume * 127;
+    byte channel = 1;
+
+    MIDI.sendNoteOn(note, velocity, channel);
+    MIDI.sendNoteOff(note, velocity, channel);
+  /*  delay(75);
+  }*/
 }
 
 void leerPiezos() {
-  for (int i = 0; i < 8; i++)
+
+bool salir=false;
+if(millis()-t0>freqTamborMillis)
+{
+  for (int i = 0; i < 8 && !salir ; i++)  //esto es hasta 8
   {
-    int val=0;
-    if (millis() - t0 > 1000)
-    {
+    /* random */
+    /*   int val=0;
+      if (millis() - t0 > 1000)
+      {
       t0 = millis();
       if (j == i)
       {
           Serial.printf("asignando valor 1000");
 
-        val = 512;
+        val = 200;
 
       }
       j++;
       if (j > 7)
         j = 0;
-    }
-    
+      }*/
 
-    //int val = amux.AnalogRead(i);
+
+    /**
+       4051
+    */
+    int val = amuxAnalogRead(i);
+    /**
+       Single
+    */
+    //int val=analogRead(A0);
+    Serial.printf("valorrrrr %d : %d \n", i, val);
+
     if (valoresMaximos[i] < val)
       valoresMaximos[i] = val;
 
- 
+
 
     if (i == 0 && pedalHit && configMin[i] >= val)
     {
@@ -355,7 +389,7 @@ void leerPiezos() {
     }
     if (configMin[i] < val)
     {
-
+salir=true;
       if (i == 0)
         pedalHit = true;
       else if (i == 1 && pedalHit)
@@ -389,6 +423,7 @@ void leerPiezos() {
 
   }
 }
+}
 
 void resetValoresMax() {
   for (int i = 0; i < 8; i++)
@@ -397,4 +432,58 @@ void resetValoresMax() {
 
 
   }
+}
+
+int amuxAnalogRead(int i)
+{
+  if (i == 0)
+  {
+    return changeMux(LOW, LOW, LOW);
+  }
+  else if (i == 1)
+  {
+    return changeMux(LOW, LOW, HIGH);
+
+  }
+  else if (i == 2)
+  {
+    return changeMux(LOW, HIGH, HIGH);
+
+  }
+  else if (i == 3)
+  {
+    return changeMux(LOW, HIGH, LOW);
+
+  }
+  else if (i == 4)
+  {
+    return changeMux(HIGH, HIGH, LOW);
+
+  }
+  else if (i == 5)
+  {
+    return changeMux(HIGH, LOW, LOW);
+
+  }
+  else if (i == 6)
+  {
+    return changeMux(HIGH, LOW, HIGH);
+
+  }
+  else if (i == 7)
+  {
+    return changeMux(HIGH, HIGH, HIGH);
+
+     
+  }
+
+}
+
+int changeMux(int c, int b, int a) {
+  digitalWrite(MUX_A, a);
+  digitalWrite(MUX_B, b);
+  digitalWrite(MUX_C, c);
+  analogRead(ANALOG_INPUT);analogRead(ANALOG_INPUT);analogRead(ANALOG_INPUT);
+  return analogRead(ANALOG_INPUT);
+
 }
