@@ -16,7 +16,7 @@
 #include "pie_izq_cer.h"
 
 unsigned long t0 = millis();
- long freqTamborMillis = 200.0; //300bpm
+long freqTamborMillis = 100.0; //600bpm
 int j = 0;
 
 #define MUX_A D5
@@ -82,11 +82,11 @@ void setup()
 
   out = new AudioOutputI2SNoDAC();
 
-  mixer = new AudioOutputMixer(32, out);
+  mixer = new AudioOutputMixer(512, out);
   for (int i = 0; i < 8; i++)
   {
     stub[i] = mixer->NewInput();
-    start[i]=0;
+    start[i] = 0;
   }
   delay(100);
 
@@ -103,31 +103,53 @@ void loop()
 
 
   MIDI.read();
+  //Serial.println("a:)");
 
   leerPiezos();
+  //Serial.println("b:)");
+
   for (int i = 0; i < 8; i++)
   {
+
     if (i == 1 && pararSplash && Running[i])
     {
 
+      //Serial.println("c:)");
 
       pararSplash = false;
-      wav[i]->stop(); stub[i]->stop();
+      //Serial.println("d:)");
+
+      wav[i]->stop();
+      //Serial.println("e:)");
+      stub[i]->stop();
+      //Serial.println("f:)");
+delete wav[i];
+   delete file[i];
       Running[i] = false; Serial.printf("stopping %d \n", i);
 
 
-    } else if (Running[i] && wav[i]->isRunning()) {
+    } else if (Running[i] &&  wav[i]->isRunning()) {
 
+      //Serial.println("g:)");
 
       if (!wav[i]->loop()) {
-        wav[i]->stop(); stub[i]->stop();
+     //   Serial.println("h:)");
+
+        wav[i]->stop();
+      //  Serial.println("i:)");
+        stub[i]->stop();
+   //     delete wav[i];
+   //delete file[i];
         Running[i] = false; Serial.printf("stopping %d \n", i);
+        
       }
     }
   }
 
+ // Serial.println("j:)");
 
   server->handleClient();
+//  Serial.println("k:)");
 
 }
 
@@ -307,122 +329,130 @@ void leerEeprom()
 
 
 void Beginplay(int Channel, const void *wavfilename, int sizewav, float Volume, byte note) {
- /* if (millis() - start[Channel] > freqTamborMillis)
-  {*/
-//    Volume=1.0;
+   if (millis() - start[Channel] > freqTamborMillis)
+    {
+   //   Volume=1.0;
 
-    Serial.printf("CH:");
-    Serial.print(Channel);
-    stub[Channel]->SetGain(Volume);
+  Serial.printf("CH:");
+  Serial.print(Channel);
+  stub[Channel]->SetGain(Volume);
+delete wav[Channel];
+  wav[Channel] = new AudioGeneratorWAV();
 
-    wav[Channel] = new AudioGeneratorWAV();
+ delete file[Channel]; // housekeeping ?
 
-    delete file[Channel]; // housekeeping ?
+ file[Channel] = new AudioFileSourcePROGMEM( wavfilename, sizewav );
 
-    file[Channel] = new AudioFileSourcePROGMEM( wavfilename, sizewav );
+  wav[Channel]->begin(file[Channel], stub[Channel]);
 
-    wav[Channel]->begin(file[Channel], stub[Channel]);
+  Running[Channel] = true;
+  Serial.printf("> at volume :");
+  Serial.println(Volume);
+  start[Channel] = millis();
+  t0 = start[Channel];
 
-    Running[Channel] = true;
-    Serial.printf("> at volume :");
-    Serial.println(Volume);
-    start[Channel] = millis();
-    t0=start[Channel];
+  byte velocity = Volume * 127;
+  byte channel = 1;
 
-    byte velocity = Volume * 127;
-    byte channel = 1;
-
-    MIDI.sendNoteOn(note, velocity, channel);
-    MIDI.sendNoteOff(note, velocity, channel);
-  /*  delay(75);
-  }*/
+  MIDI.sendNoteOn(note, velocity, channel);
+  MIDI.sendNoteOff(note, velocity, channel);
+ 
+    }
 }
 
 void leerPiezos() {
 
-bool salir=false;
-if(millis()-t0>freqTamborMillis)
-{
-  for (int i = 0; i < 8 && !salir ; i++)  //esto es hasta 8
-  {
-    /* random */
-    /*   int val=0;
-      if (millis() - t0 > 1000)
-      {
-      t0 = millis();
-      if (j == i)
-      {
-          Serial.printf("asignando valor 1000");
 
-        val = 200;
+ /* if (millis() - t0 > freqTamborMillis)
+  {*/
+    int max = 0;
+    int valorMax = -1;
+    for (int i = 0; i < 8  ; i++)  
+    {
+      /* random */
+      /*   int val=0;
+        if (millis() - t0 > 1000)
+        {
+        t0 = millis();
+        if (j == i)
+        {
+            Serial.printf("asignando valor 1000");
+
+          val = 200;
+
+        }
+        j++;
+        if (j > 7)
+          j = 0;
+        }*/
+
+
+      /**
+         4051
+      */
+      int val = amuxAnalogRead(i);
+      if (val > max)
+      {
+        max = val;
+        valorMax = i;
 
       }
-      j++;
-      if (j > 7)
-        j = 0;
-      }*/
+      /**
+         Single
+      */
+      //int val=analogRead(A0);
+   //   Serial.printf("valorrrrr %d : %d \n", i, val);
 
-
-    /**
-       4051
-    */
-    int val = amuxAnalogRead(i);
-    /**
-       Single
-    */
-    //int val=analogRead(A0);
-    Serial.printf("valorrrrr %d : %d \n", i, val);
-
-    if (valoresMaximos[i] < val)
-      valoresMaximos[i] = val;
+      if (valoresMaximos[i] < val)
+        valoresMaximos[i] = val;
+    }
 
 
 
-    if (i == 0 && pedalHit && configMin[i] >= val)
+    if (valorMax == 0 && pedalHit && configMin[valorMax] >= max)
     {
       pedalHit = false;
 
 
-      Beginplay(7, pie_izq_cer, pie_izq_cer_len, configVol[i], 70);
+      Beginplay(0, pie_izq_cer, pie_izq_cer_len, configVol[valorMax], 70);
       pararSplash = true;
 
     }
-    if (configMin[i] < val)
+    if (configMin[valorMax] < max)
     {
-salir=true;
-      if (i == 0)
+      if (valorMax == 0)
         pedalHit = true;
-      else if (i == 1 && pedalHit)
-        Beginplay(0, der1op, der1op_len, ((float)val / (float)configMax[i])*configVol[i], 1);
-      else if (i == 1 && !pedalHit)
-        Beginplay(0, der1cl, der1cl_len, ((float)val / (float)configMax[i])*configVol[i], 1);
+      else if (valorMax == 1 && pedalHit)
+        Beginplay(1, der1op, der1op_len, ((float)max / (float)configMax[valorMax])*configVol[valorMax], 1);
+      else if (valorMax == 1 && !pedalHit)
+        Beginplay(1, der1cl, der1cl_len, ((float)max / (float)configMax[valorMax])*configVol[valorMax], 1);
 
-      else if (i == 2)
-        Beginplay(1, der2, der2_len, ((float)val / (float)configMax[i])*configVol[i], 20);
+      else if (valorMax == 2)
+        Beginplay(2, der2, der2_len, ((float)max / (float)configMax[valorMax])*configVol[valorMax], 20);
 
-      else if (i == 3)
-        Beginplay(2, der3, der3_len, ((float)val / (float)configMax[i])*configVol[i], 20);
-      else if (i == 4)
-        Beginplay(3, izq1, izq1_len, ((float)val / (float)configMax[i])*configVol[i], 30);
-      else if (i == 5)
-        Beginplay(4, izq2, izq2_len, ((float)val / (float)configMax[i])*configVol[i], 40);
-      else if (i == 6)
-        Beginplay(5, izq3, izq3_len, ((float)val / (float)configMax[i])*configVol[i], 50);
-      else if (i == 7)
-        Beginplay(6, pie_der, pie_der_len, ((float)val / (float)configMax[i])*configVol[i], 60);
-
-
+      else if (valorMax == 3)
+        Beginplay(3, der3, der3_len, ((float)max / (float)configMax[valorMax])*configVol[valorMax], 20);
+      else if (valorMax == 4)
+        Beginplay(4, izq1, izq1_len, ((float)max / (float)configMax[valorMax])*configVol[valorMax], 30);
+      else if (valorMax == 5)
+        Beginplay(5, izq2, izq2_len, ((float)max / (float)configMax[valorMax])*configVol[valorMax], 40);
+      else if (valorMax == 6)
+        Beginplay(6, izq3, izq3_len, ((float)max / (float)configMax[valorMax])*configVol[valorMax], 50);
+      else if (valorMax == 7)
+        Beginplay(7, pie_der, pie_der_len, ((float)max / (float)configMax[valorMax])*configVol[valorMax], 60);
 
 
 
 
 
 
-    }
+
+
+   // }
+
 
 
   }
-}
 }
 
 void resetValoresMax() {
@@ -474,7 +504,7 @@ int amuxAnalogRead(int i)
   {
     return changeMux(HIGH, HIGH, HIGH);
 
-     
+
   }
 
 }
@@ -483,7 +513,7 @@ int changeMux(int c, int b, int a) {
   digitalWrite(MUX_A, a);
   digitalWrite(MUX_B, b);
   digitalWrite(MUX_C, c);
-  analogRead(ANALOG_INPUT);analogRead(ANALOG_INPUT);analogRead(ANALOG_INPUT);
+  //analogRead(ANALOG_INPUT); analogRead(ANALOG_INPUT); analogRead(ANALOG_INPUT);
   return analogRead(ANALOG_INPUT);
 
 }
